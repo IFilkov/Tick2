@@ -1,0 +1,1059 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Street Renegade</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "GameFont";
+        src: url("assets/fonts/3_Muz-TV2000.ttf") format("truetype");
+        font-weight: normal;
+        font-style: normal;
+        font-display: block;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        user-select: none;
+        touch-action: none;
+        background: #000;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      // =============================================================
+      // КОНСТАНТЫ
+      // =============================================================
+      const W = 800,
+        H = 600;
+      const FLOOR_TOP = 340,
+        FLOOR_BOT = 560;
+      const FONT = '"GameFont"';
+
+      // =============================================================
+      // PRELOAD SCENE
+      // =============================================================
+      class PreloadScene extends Phaser.Scene {
+        constructor() {
+          super("Preload");
+        }
+
+        preload() {
+          const img = "assets/images/";
+          const aud = "assets/audio/";
+
+          this.load.spritesheet("player", `${img}humanFight.png`, {
+            frameWidth: 172,
+            frameHeight: 249,
+          });
+          this.load.spritesheet("dog", `${img}dog_sprite.png`, {
+            frameWidth: 195,
+            frameHeight: 128,
+          });
+          this.load.spritesheet("homeless", `${img}homeless_sprite.png`, {
+            frameWidth: 216,
+            frameHeight: 312,
+          });
+          this.load.spritesheet("robot", `${img}robot.png`, {
+            frameWidth: 172,
+            frameHeight: 249,
+          });
+
+          this.load.image("bg", `${img}background.png`);
+          this.load.image("sky", `${img}sky.jpg`);
+
+          // Звуки
+          this.load.audio("hit2", `${aud}hit2.mp3`);
+          this.load.audio("hit3", `${aud}hit3.mp3`);
+          this.load.audio("groan1", `${aud}groan1.mp3`);
+          this.load.audio("bark", `${aud}bark.mp3`);
+          this.load.audio("rage", `${aud}rage.mp3`);
+          this.load.audio("krit", `${aud}krit.mp3`);
+          this.load.audio("knockout", `${aud}knockout.mp3`);
+          this.load.audio("fon1", `${aud}fon1.mp3`);
+        }
+
+        create() {
+          // ── Анимации игрока (humanFight.png 4x4) ─────────────────
+          const A = (key, tex, s, e, fps, rep = -1) => {
+            if (!this.anims.exists(key))
+              this.anims.create({
+                key,
+                frames: this.anims.generateFrameNumbers(tex, {
+                  start: s,
+                  end: e,
+                }),
+                frameRate: fps,
+                repeat: rep,
+              });
+          };
+          A("p_idle", "player", 4, 4, 5); // Используем стойку из ряда ходьбы
+          A("p_walk", "player", 4, 7, 10);
+          A("p_kick", "player", 8, 11, 12, 0);
+          A("p_punch", "player", 12, 15, 12, 0);
+
+          // Собака
+          A("dog_idle", "dog", 0, 3, 5);
+          A("dog_walk", "dog", 12, 15, 10);
+          A("dog_attack", "dog", 5, 7, 12, 0);
+
+          // Бомж
+          A("bum_idle", "homeless", 0, 3, 5);
+          A("bum_walk", "homeless", 4, 7, 10);
+          A("bum_attack", "homeless", 4, 7, 14, 0);
+          A("bum_death", "homeless", 8, 11, 8, 0);
+
+          // Робот
+          A("rob_idle", "robot", 0, 3, 8);
+          A("rob_walk", "robot", 0, 3, 12);
+          A("rob_punch", "robot", 4, 7, 12, 0);
+          A("rob_kick", "robot", 8, 11, 12, 0);
+          A("rob_death", "robot", 12, 14, 8, 0);
+
+          this.scene.start("Scene1");
+        }
+      }
+
+      // =============================================================
+      // SCENE 1 — ПЕРВАЯ СЦЕНА (Beat-em-up)
+      // =============================================================
+      class Scene1 extends Phaser.Scene {
+        constructor() {
+          super("Scene1");
+        }
+
+        // ── CREATE ─────────────────────────────────────────────────
+        create() {
+          // Фон
+          this.add.image(W / 2, H / 2, "sky").setDisplaySize(W, H);
+          this.add.image(W / 2, H / 2, "bg").setDisplaySize(W, H);
+
+          // Тень пола
+          const floorGfx = this.add.graphics();
+          floorGfx.fillStyle(0x000000, 0.18);
+          floorGfx.fillRect(0, FLOOR_TOP, W, FLOOR_BOT - FLOOR_TOP);
+
+          // Горизонтальная линия пола
+          floorGfx.lineStyle(2, 0x000000, 0.3);
+          floorGfx.lineBetween(0, FLOOR_TOP, W, FLOOR_TOP);
+
+          // ── Создаём персонажей ────────────────────────────────────
+          this.player = this.makePlayer(W / 2, 460);
+          this.dog = this.makeDog(W / 2 - 80, 460);
+          this.enemies = [
+            this.makeEnemy("homeless", 80, 440, "bum"),
+            this.makeEnemy("robot", 720, 450, "rob"),
+          ];
+
+          // ── Состояние ─────────────────────────────────────────────
+          this.gameOver = false;
+          this.playerHP = 100;
+          this.dogHP = 100;
+
+          // ── Хитзона игрока ───────────────────────────────────────
+          this.playerFist = this.add.zone(0, 0, 70, 60);
+          this.physics.world.enable(this.playerFist);
+          this.playerFist.body.setAllowGravity(false);
+          this.playerFist.x = -999;
+
+          // ── Хитзона собаки ───────────────────────────────────────
+          this.dogFist = this.add.zone(0, 0, 60, 50);
+          this.physics.world.enable(this.dogFist);
+          this.dogFist.body.setAllowGravity(false);
+          this.dogFist.x = -999;
+
+          // ── Кулдауны ──────────────────────────────────────────────
+          this.playerHitCD = false;
+          this.dogHitCD = false;
+
+          // ── Ввод клавиатуры ───────────────────────────────────────
+          this.keys = this.input.keyboard.addKeys({
+            up: Phaser.Input.Keyboard.KeyCodes.UP,
+            dn: Phaser.Input.Keyboard.KeyCodes.DOWN,
+            lt: Phaser.Input.Keyboard.KeyCodes.LEFT,
+            rt: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+            w: Phaser.Input.Keyboard.KeyCodes.W,
+            s: Phaser.Input.Keyboard.KeyCodes.S,
+            a: Phaser.Input.Keyboard.KeyCodes.A,
+            d: Phaser.Input.Keyboard.KeyCodes.D,
+            z: Phaser.Input.Keyboard.KeyCodes.Z, // удар
+            x: Phaser.Input.Keyboard.KeyCodes.X, // бросок
+            space: Phaser.Input.Keyboard.KeyCodes.SPACE, // прыжок
+            q: Phaser.Input.Keyboard.KeyCodes.Q, // собака атакует
+          });
+          this.attackKey = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.Z,
+          );
+          this.jumpKey = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+          this.dogKey = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.Q,
+          );
+
+          // ── Джойстик и кнопки ─────────────────────────────────────
+          this.joyState = { dx: 0, dy: 0 };
+          this.btnState = {
+            attack: false,
+            throw: false,
+            jump: false,
+            dog: false,
+          };
+          this.prevJump = false;
+          this.prevDog = false;
+
+          this.createMobileControls();
+
+          // ── UI ────────────────────────────────────────────────────
+          this.createUI();
+
+          // ── Фон ───────────────────────────────────────────────────
+          this.bgm = this.sound.add("fon1", { loop: true, volume: 0.25 });
+          this.bgm.play();
+
+          // ── Depth sort каждый кадр ────────────────────────────────
+          this.sortDepthTimer = this.time.addEvent({
+            delay: 50,
+            loop: true,
+            callback: this.sortDepth,
+            callbackScope: this,
+          });
+        }
+
+        // ── Создание персонажей ────────────────────────────────────
+        makePlayer(x, y) {
+          const p = this.physics.add.sprite(x, y, "player");
+          p.setOrigin(0.5, 1);
+          p.body.setAllowGravity(false);
+          p.setCollideWorldBounds(true);
+          p.setScale(1.2);
+          p.body.setSize(80, 150).setOffset(46, 99);
+          p.anims.play("p_idle", true);
+          p.facing = 1; // 1 = right, -1 = left
+          p.isAttacking = false;
+          p.isJumping = false;
+          p.jumpTween = null;
+          p.shadow = this.addShadow(x, y);
+          return p;
+        }
+
+        makeDog(x, y) {
+          const d = this.physics.add.sprite(x, y, "dog");
+          d.setOrigin(0.5, 1);
+          d.body.setAllowGravity(false);
+          d.setScale(0.9);
+          d.body.setSize(120, 80).setOffset(38, 48);
+          d.anims.play("dog_idle", true);
+          d.isAttacking = false;
+          d.attackTarget = null;
+          d.shadow = this.addShadow(x, y, 0.7);
+          return d;
+        }
+
+        makeEnemy(key, x, y, prefix) {
+          const e = this.physics.add.sprite(x, y, key);
+          e.setOrigin(0.5, 1);
+          e.body.setAllowGravity(false);
+          e.setScale(key === "robot" ? 1.1 : 1.0);
+          e.setCollideWorldBounds(true);
+          e.body
+            .setSize(key === "robot" ? 70 : 80, key === "robot" ? 180 : 220)
+            .setOffset(key === "robot" ? 51 : 68, key === "robot" ? 69 : 92);
+          e.anims.play(`${prefix}_idle`, true);
+          e.prefix = prefix;
+          e.hp = 100;
+          e.maxHp = 100;
+          e.isAttacking = false;
+          e.attackCD = false;
+          e.dead = false;
+          e.shadow = this.addShadow(x, y, key === "robot" ? 1.0 : 0.9);
+          e.hpBar = this.makeEnemyHpBar(e);
+          return e;
+        }
+
+        addShadow(x, y, scale = 1) {
+          const g = this.add.graphics();
+          g.fillStyle(0x000000, 0.22);
+          g.fillEllipse(0, 0, 70 * scale, 18 * scale);
+          g.x = x;
+          g.y = y;
+          return g;
+        }
+
+        makeEnemyHpBar(e) {
+          const bar = {
+            bg: this.add.rectangle(0, 0, 80, 8, 0x330000),
+            fill: this.add.rectangle(0, 0, 80, 8, 0xff2200),
+          };
+          bar.bg.setDepth(50);
+          bar.fill.setDepth(51);
+          return bar;
+        }
+
+        // ── Мобильные контролы ────────────────────────────────────
+        createMobileControls() {
+          // ── Джойстик справа ──────────────────────────────────────
+          const JX = 660,
+            JY = 500,
+            BR = 70,
+            SR = 34,
+            MD = 48;
+
+          this.joystickBase = this.add
+            .circle(JX, JY, BR, 0x333333, 0.3)
+            .setStrokeStyle(3, 0x888888, 0.5)
+            .setScrollFactor(0)
+            .setDepth(100);
+          this.joystickStick = this.add
+            .circle(JX, JY, SR, 0x00ff88, 0.7)
+            .setStrokeStyle(3, 0x00cc66, 0.9)
+            .setScrollFactor(0)
+            .setDepth(101);
+
+          const jZone = this.add
+            .zone(JX, JY, BR * 2.8, BR * 2.8)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(102);
+
+          this._joyActive = false;
+          this._joyPID = null;
+
+          jZone.on("pointerdown", (p) => {
+            this._joyActive = true;
+            this._joyPID = p.id;
+            this._updateJoy(p, JX, JY, MD);
+          });
+          this.input.on("pointermove", (p) => {
+            if (this._joyActive && p.id === this._joyPID)
+              this._updateJoy(p, JX, JY, MD);
+          });
+          const resetJoy = (p) => {
+            if (!this._joyActive || p.id !== this._joyPID) return;
+            this._joyActive = false;
+            this._joyPID = null;
+            this.joystickStick.setPosition(JX, JY);
+            this.joyState.dx = 0;
+            this.joyState.dy = 0;
+          };
+          this.input.on("pointerup", resetJoy);
+          jZone.on("pointerout", resetJoy);
+
+          // ── Кнопки слева (2×2) ────────────────────────────────────
+          const buttons = [
+            { x: 90, y: 490, label: "👊", color: 0xdd3300, key: "attack" },
+            { x: 165, y: 490, label: "🤸", color: 0x2266dd, key: "throw" },
+            { x: 90, y: 420, label: "⬆", color: 0x22aa44, key: "jump" },
+            { x: 165, y: 420, label: "🐕", color: 0xddaa00, key: "dog" },
+          ];
+
+          buttons.forEach((b) => {
+            const circle = this.add
+              .circle(b.x, b.y, 36, b.color, 0.75)
+              .setStrokeStyle(3, 0xffffff, 0.4)
+              .setScrollFactor(0)
+              .setDepth(100)
+              .setInteractive();
+            this.add
+              .text(b.x, b.y, b.label, { fontSize: "22px" })
+              .setOrigin(0.5)
+              .setScrollFactor(0)
+              .setDepth(101);
+
+            circle.on("pointerdown", () => {
+              this.btnState[b.key] = true;
+            });
+            circle.on("pointerup", () => {
+              this.btnState[b.key] = false;
+            });
+            circle.on("pointerout", () => {
+              this.btnState[b.key] = false;
+            });
+          });
+        }
+
+        _updateJoy(p, cx, cy, md) {
+          const dx = p.x - cx,
+            dy = p.y - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const angle = Math.atan2(dy, dx);
+          const clamped = Math.min(dist, md);
+          this.joystickStick.setPosition(
+            cx + Math.cos(angle) * clamped,
+            cy + Math.sin(angle) * clamped,
+          );
+          const dz = 10;
+          if (dist > dz) {
+            this.joyState.dx = Math.cos(angle);
+            this.joyState.dy = Math.sin(angle);
+          } else {
+            this.joyState.dx = 0;
+            this.joyState.dy = 0;
+          }
+        }
+
+        // ── UI ────────────────────────────────────────────────────
+        createUI() {
+          const ts = { fontFamily: FONT, fontSize: "13px", fill: "#fff" };
+
+          // Игрок HP
+          this.add.text(10, 10, "Игрок:", ts).setDepth(60);
+          this.add
+            .rectangle(10, 26, 162, 14, 0x220000)
+            .setOrigin(0, 0.5)
+            .setDepth(60);
+          this.playerHpBar = this.add
+            .rectangle(10, 26, 160, 10, 0x00ff44)
+            .setOrigin(0, 0.5)
+            .setDepth(61);
+
+          // Собака HP
+          this.add.text(10, 38, "Собака:", ts).setDepth(60);
+          this.add
+            .rectangle(10, 54, 162, 10, 0x220000)
+            .setOrigin(0, 0.5)
+            .setDepth(60);
+          this.dogHpBar = this.add
+            .rectangle(10, 54, 160, 8, 0x88ff44)
+            .setOrigin(0, 0.5)
+            .setDepth(61);
+
+          // Подсказка клавиш (только на десктопе)
+          this.add
+            .text(
+              W / 2,
+              10,
+              "Стрелки: движение  |  Z: удар  |  Space: прыжок  |  Q: собака",
+              { fontFamily: FONT, fontSize: "11px", fill: "#aaaaaa" },
+            )
+            .setOrigin(0.5, 0)
+            .setDepth(60);
+        }
+
+        updateHpBars() {
+          this.playerHpBar.width = Math.max(0, (this.playerHP / 100) * 160);
+          this.playerHpBar.setFillStyle(
+            this.playerHP > 50
+              ? 0x00ff44
+              : this.playerHP > 25
+                ? 0xffcc00
+                : 0xff2200,
+          );
+          this.dogHpBar.width = Math.max(0, (this.dogHP / 100) * 160);
+          this.dogHpBar.setFillStyle(
+            this.dogHP > 50 ? 0x88ff44 : this.dogHP > 25 ? 0xffcc00 : 0xff2200,
+          );
+        }
+
+        // ── UPDATE ────────────────────────────────────────────────
+        update() {
+          if (this.gameOver) return;
+
+          this.updatePlayer();
+          this.updateDog();
+          this.enemies.forEach((e) => this.updateEnemy(e));
+          this.checkHits();
+          this.updateShadows();
+          this.updateEnemyHpBars();
+          this.updateHpBars();
+          this.sortDepth();
+        }
+
+        // ── ИГРОК ────────────────────────────────────────────────
+        updatePlayer() {
+          const p = this.player;
+          const spd = 180;
+
+          // Ввод
+          const lt =
+            this.keys.lt.isDown ||
+            this.keys.a.isDown ||
+            this.joyState.dx < -0.2;
+          const rt =
+            this.keys.rt.isDown || this.keys.d.isDown || this.joyState.dx > 0.2;
+          const up =
+            this.keys.up.isDown ||
+            this.keys.w.isDown ||
+            this.joyState.dy < -0.2;
+          const dn =
+            this.keys.dn.isDown || this.keys.s.isDown || this.joyState.dy > 0.2;
+
+          const jumpJust =
+            Phaser.Input.Keyboard.JustDown(this.jumpKey) ||
+            (!this.prevJump && this.btnState.jump);
+          const attackJust =
+            Phaser.Input.Keyboard.JustDown(this.attackKey) ||
+            (!this.prevAttack && this.btnState.attack);
+          const dogJust =
+            Phaser.Input.Keyboard.JustDown(this.dogKey) ||
+            (!this.prevDog && this.btnState.dog);
+
+          this.prevJump = this.btnState.jump;
+          this.prevAttack = this.btnState.attack;
+          this.prevDog = this.btnState.dog;
+
+          if (p.isAttacking) {
+            p.setVelocity(0, 0);
+            return;
+          }
+
+          // ── Прыжок ───────────────────────────────────────────────
+          if (jumpJust && !p.isJumping) {
+            p.isJumping = true;
+            const baseY = p.y;
+            p.jumpTween = this.tweens.add({
+              targets: p,
+              y: baseY - 120,
+              duration: 280,
+              ease: "Power2",
+              yoyo: true,
+              onComplete: () => {
+                p.isJumping = false;
+                p.y = baseY;
+                p.jumpTween = null;
+              },
+            });
+          }
+
+          // ── Удар ─────────────────────────────────────────────────
+          if (attackJust && !p.isJumping) {
+            p.isAttacking = true;
+            p.setVelocity(0, 0);
+            // Разворачиваем к ближайшему врагу перед ударом
+            let nearestEnemy = null,
+              nearD = Infinity;
+            this.enemies.forEach((en) => {
+              if (!en.dead) {
+                const d = Math.abs(en.x - p.x);
+                if (d < nearD) {
+                  nearD = d;
+                  nearestEnemy = en;
+                }
+              }
+            });
+            if (nearestEnemy) p.facing = nearestEnemy.x > p.x ? 1 : -1;
+            p.flipX = p.facing === 1; // спрайт смотрит влево
+            // Чередуем удар рукой/ногой
+            const atk = Phaser.Math.RND.pick(["p_kick", "p_punch"]);
+            const pAtkAnim = this.anims.get(atk);
+            const pAtkDur = pAtkAnim
+              ? (pAtkAnim.frames.length / pAtkAnim.frameRate) * 1000
+              : 400;
+            p.anims.play(atk, true);
+            // delayedCall надёжнее once() — не зависит от завершения анимации
+            this.time.delayedCall(pAtkDur + 40, () => {
+              p.isAttacking = false;
+              p.anims.play("p_idle", true);
+            });
+          }
+
+          // ── Команда собаке атаковать ─────────────────────────────
+          if (dogJust) {
+            this.commandDogAttack();
+            this.sound.play("bark", { volume: 0.7 });
+          }
+
+          // ── Движение ─────────────────────────────────────────────
+          if (!p.isJumping) {
+            let vx = 0,
+              vy = 0;
+            if (lt) {
+              vx = -spd;
+              p.facing = -1;
+            }
+            if (rt) {
+              vx = spd;
+              p.facing = 1;
+            }
+            if (up) vy = -spd * 0.6;
+            if (dn) vy = spd * 0.6;
+
+            // Ограничение по полу
+            if (p.y + vy * (1 / 60) < FLOOR_TOP + 30) vy = 0;
+            if (p.y + vy * (1 / 60) > FLOOR_BOT) vy = 0;
+
+            p.setVelocity(vx, vy);
+            p.flipX = p.facing === 1; // спрайт смотрит влево по умолчанию
+
+            if (vx !== 0 || vy !== 0) p.anims.play("p_walk", true);
+            else if (!p.isAttacking) p.anims.play("p_idle", true);
+          }
+
+          // ── Позиция хитзоны игрока ───────────────────────────────
+          if (p.isAttacking) {
+            const curAnim = p.anims.currentAnim;
+            const isKick = curAnim && curAnim.key === "p_kick";
+            this.playerFist.x = p.x + p.facing * 90;
+            this.playerFist.y = p.y - (isKick ? 70 : 140);
+          } else {
+            this.playerFist.x = -999;
+            this.playerFist.y = -999;
+          }
+        }
+
+        // ── СОБАКА ───────────────────────────────────────────────
+        updateDog() {
+          const d = this.dog;
+          if (d.isAttacking) return;
+
+          if (d.attackTarget && !d.attackTarget.dead) {
+            // Идём к цели
+            const tx = d.attackTarget.x,
+              ty = d.attackTarget.y;
+            const dx = tx - d.x,
+              dy = ty - d.y;
+            const dist = Math.sqrt(dx * dx + dy * dy * 4);
+
+            if (dist > 55) {
+              const spd = 220;
+              d.setVelocityX(dx > 0 ? spd : -spd);
+              d.setVelocityY(Math.sign(dy) * spd * 0.5);
+              d.flipX = dx < 0;
+              d.anims.play("dog_walk", true);
+            } else {
+              // Атакуем
+              d.setVelocity(0, 0);
+              d.isAttacking = true;
+              d.anims.play("dog_attack", true);
+              const dogAtkAnim = this.anims.get("dog_attack");
+              const dogAtkDur = dogAtkAnim
+                ? (dogAtkAnim.frames.length / dogAtkAnim.frameRate) * 1000
+                : 350;
+              this.time.delayedCall(dogAtkDur + 40, () => {
+                d.isAttacking = false;
+                this.dealDamageToEnemy(
+                  d.attackTarget,
+                  Phaser.Math.Between(8, 18),
+                  d.x,
+                );
+                if (d.attackTarget && d.attackTarget.dead)
+                  d.attackTarget = null;
+                d.anims.play("dog_idle", true);
+              });
+            }
+          } else {
+            // Следуем за игроком
+            d.attackTarget = null;
+            const px = this.player.x,
+              py = this.player.y;
+            const dx = px - 90 - d.x,
+              dy = py - d.y;
+            const dist = Math.sqrt(dx * dx + dy * dy * 4);
+
+            if (dist > 30) {
+              const spd = 160;
+              d.setVelocityX(Math.sign(dx) * Math.min(spd, Math.abs(dx) * 3));
+              d.setVelocityY(
+                Math.sign(dy) * Math.min(spd * 0.5, Math.abs(dy) * 3),
+              );
+              d.flipX = dx < 0;
+              d.anims.play("dog_walk", true);
+            } else {
+              d.setVelocity(0, 0);
+              d.anims.play("dog_idle", true);
+              d.flipX = this.player.x < d.x;
+            }
+          }
+
+          // Хитзона собаки
+          if (d.isAttacking) {
+            this.dogFist.x = d.x + (d.flipX ? -70 : 70);
+            this.dogFist.y = d.y - 40;
+          } else {
+            this.dogFist.x = -999;
+            this.dogFist.y = -999;
+          }
+
+          // Ограничение по полу
+          if (d.y < FLOOR_TOP + 20) d.y = FLOOR_TOP + 20;
+          if (d.y > FLOOR_BOT) d.y = FLOOR_BOT;
+        }
+
+        commandDogAttack() {
+          // Ищем ближайшего живого врага
+          let closest = null,
+            minD = Infinity;
+          this.enemies.forEach((e) => {
+            if (e.dead) return;
+            const dx = e.x - this.dog.x,
+              dy = e.y - this.dog.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minD) {
+              minD = dist;
+              closest = e;
+            }
+          });
+          if (closest) this.dog.attackTarget = closest;
+        }
+
+        // ── ВРАГИ ────────────────────────────────────────────────
+        updateEnemy(e) {
+          if (e.dead) return;
+          if (e.isAttacking) return;
+
+          const px = this.player.x,
+            py = this.player.y;
+          const dx = px - e.x,
+            dy = py - e.y;
+          const dist2d = Math.sqrt(dx * dx);
+          const distY = Math.abs(dy);
+          const dist = Math.sqrt(dx * dx + dy * dy * 4);
+
+          // Робот смотрит влево по умолчанию — инвертируем flipX
+          e.flipX = e.prefix === "rob" ? dx > 0 : dx < 0;
+
+          const meleeRange = 75;
+
+          if (dist < meleeRange && !e.attackCD) {
+            // Атака игрока
+            e.setVelocity(0, 0);
+            e.isAttacking = true;
+            e.attackCD = true;
+            const atk = `${e.prefix}_${Phaser.Math.RND.pick(["punch", "kick"])}`;
+            const atkAnim = this.anims.get(atk);
+            const atkDuration = atkAnim
+              ? (atkAnim.frames.length / atkAnim.frameRate) * 1000
+              : 500;
+            e.anims.play(atk, true);
+            // Используем delayedCall вместо once() — надёжнее
+            this.time.delayedCall(atkDuration + 50, () => {
+              if (e.dead) return;
+              e.isAttacking = false;
+              const d2 = Math.sqrt(
+                Math.pow(this.player.x - e.x, 2) +
+                  Math.pow(this.player.y - e.y, 2) * 4,
+              );
+              if (d2 < meleeRange + 20)
+                this.hurtPlayer(Phaser.Math.Between(5, 18), e.x);
+              e.anims.play(`${e.prefix}_idle`, true);
+              const cd = e.prefix === "bum" ? 400 : 700;
+              this.time.delayedCall(cd, () => {
+                if (!e.dead) e.attackCD = false;
+              });
+            });
+          } else if (dist > meleeRange) {
+            // Преследуем
+            const spd = e.prefix === "rob" ? 110 : 95;
+            e.setVelocityX(Math.sign(dx) * spd);
+            e.setVelocityY(Math.sign(dy) * spd * 0.6);
+            const walkKey = this.anims.exists(`${e.prefix}_walk`)
+              ? `${e.prefix}_walk`
+              : `${e.prefix}_idle`;
+            e.anims.play(walkKey, true);
+
+            // Ограничение по полу
+            if (e.y < FLOOR_TOP + 20) e.y = FLOOR_TOP + 20;
+            if (e.y > FLOOR_BOT) e.y = FLOOR_BOT;
+          } else {
+            // В диапазоне удара, но кулдаун — стоим и смотрим на игрока
+            e.setVelocity(0, 0);
+            e.anims.play(`${e.prefix}_idle`, true);
+            e.flipX = e.prefix === "rob" ? dx > 0 : dx < 0;
+          }
+        }
+
+        // ── ПРОВЕРКА ХИТОВ ───────────────────────────────────────
+        checkHits() {
+          // Кулак игрока → враги
+          if (!this.playerHitCD && this.player.isAttacking) {
+            this.enemies.forEach((e) => {
+              if (e.dead) return;
+              if (this.overlap2d(this.playerFist, e, 40)) {
+                this.playerHitCD = true;
+                this.dealDamageToEnemy(
+                  e,
+                  Phaser.Math.Between(10, 22),
+                  this.player.x,
+                );
+                this.time.delayedCall(350, () => {
+                  this.playerHitCD = false;
+                });
+              }
+            });
+          }
+
+          // Кулак собаки → враги
+          if (!this.dogHitCD && this.dog.isAttacking) {
+            this.enemies.forEach((e) => {
+              if (e.dead) return;
+              if (this.overlap2d(this.dogFist, e, 35)) {
+                this.dogHitCD = true;
+                this.dealDamageToEnemy(
+                  e,
+                  Phaser.Math.Between(8, 15),
+                  this.dog.x,
+                );
+                this.time.delayedCall(300, () => {
+                  this.dogHitCD = false;
+                });
+              }
+            });
+          }
+        }
+
+        overlap2d(zone, sprite, yTolerance) {
+          const dx = Math.abs(zone.x - sprite.x);
+          const dy = Math.abs(zone.y - (sprite.y - 80));
+          return dx < 60 && dy < yTolerance;
+        }
+
+        // ── УРОН ВРАГУ ───────────────────────────────────────────
+        dealDamageToEnemy(e, dmg, fromX) {
+          if (!e || e.dead) return;
+          e.hp = Math.max(0, e.hp - dmg);
+
+          // Звук
+          this.sound.play(Phaser.Math.RND.pick(["hit2", "hit3"]), {
+            volume: 0.8,
+          });
+
+          // Красное мигание
+          e.setTint(0xff2200);
+          this.time.delayedCall(150, () => {
+            if (!e.dead) e.clearTint();
+          });
+
+          // Отталкивание
+          const kb = fromX < e.x ? 1 : -1;
+          e.setVelocityX(kb * 200);
+          this.time.delayedCall(200, () => {
+            e.setVelocityX(0);
+          });
+
+          // Плавающий урон
+          this.floatText(e.x, e.y - 200, `-${dmg}`, "#ff4400");
+
+          if (e.hp <= 0) this.killEnemy(e);
+        }
+
+        killEnemy(e) {
+          e.dead = true;
+          e.setVelocity(0, 0);
+          this.sound.play("knockout", { volume: 0.8 });
+          const deathAnim = e.prefix === "rob" ? "rob_death" : "bum_death";
+          e.anims.play(deathAnim, true);
+          this.time.delayedCall(1500, () => {
+            this.tweens.add({
+              targets: e,
+              alpha: 0,
+              duration: 500,
+              onComplete: () => e.destroy(),
+            });
+            this.tweens.add({ targets: e.shadow, alpha: 0, duration: 500 });
+            if (e.hpBar) {
+              this.tweens.add({
+                targets: [e.hpBar.bg, e.hpBar.fill],
+                alpha: 0,
+                duration: 500,
+              });
+            }
+          });
+
+          // Проверка победы
+          const allDead = this.enemies.every((en) => en.dead);
+          if (allDead)
+            this.time.delayedCall(1000, () =>
+              this.showResult("ПОБЕДА!", "#00ff88"),
+            );
+        }
+
+        // ── УРОН ИГРОКУ ──────────────────────────────────────────
+        hurtPlayer(dmg, fromX) {
+          if (this.gameOver) return;
+          this.playerHP = Math.max(0, this.playerHP - dmg);
+          this.sound.play("groan1", { volume: 0.8 });
+
+          this.player.setTint(0xff0000);
+          this.time.delayedCall(200, () => {
+            if (this.player) this.player.clearTint();
+          });
+
+          // Отталкивание игрока
+          const kb = fromX < this.player.x ? 1 : -1;
+          this.player.setVelocityX(kb * 250);
+          this.time.delayedCall(200, () => {
+            this.player.setVelocityX(0);
+          });
+
+          this.floatText(
+            this.player.x,
+            this.player.y - 220,
+            `-${dmg}`,
+            "#ff2200",
+          );
+
+          if (this.playerHP <= 0) {
+            this.gameOver = true;
+            this.bgm.stop();
+            this.sound.play("knockout", { volume: 1.0 });
+            this.player.anims.stop();
+            this.player.setAngle(90);
+            this.time.delayedCall(500, () =>
+              this.showResult("НОКАУТ!", "#ff2200"),
+            );
+          }
+        }
+
+        // ── ТЕНИ ─────────────────────────────────────────────────
+        updateShadows() {
+          const chars = [
+            this.player,
+            this.dog,
+            ...this.enemies.filter((e) => !e.dead),
+          ];
+          chars.forEach((c) => {
+            if (!c.shadow) return;
+            c.shadow.x = c.x;
+            c.shadow.y = c.isJumping ? this._baseY(c) : c.y;
+            c.shadow.scaleY = c.isJumping ? 0.6 : 1;
+          });
+        }
+
+        _baseY(c) {
+          return c.jumpTween ? c.y + 60 : c.y;
+        }
+
+        // ── HP БАРОВ ВРАГОВ ──────────────────────────────────────
+        updateEnemyHpBars() {
+          this.enemies.forEach((e) => {
+            if (!e.hpBar || e.dead) return;
+            e.hpBar.bg.setPosition(e.x, e.y - e.displayHeight - 10);
+            e.hpBar.fill.setPosition(e.x, e.y - e.displayHeight - 10);
+            const ratio = e.hp / e.maxHp;
+            e.hpBar.fill.width = 80 * ratio;
+            e.hpBar.fill.setFillStyle(
+              ratio > 0.5 ? 0xff4400 : ratio > 0.25 ? 0xffaa00 : 0xff0000,
+            );
+          });
+        }
+
+        // ── СОРТИРОВКА ГЛУБИНЫ ────────────────────────────────────
+        sortDepth() {
+          const chars = [
+            this.player,
+            this.dog,
+            ...this.enemies.filter((e) => !e.dead),
+          ];
+          chars.sort((a, b) => a.y - b.y);
+          chars.forEach((c, i) => c.setDepth(10 + i));
+        }
+
+        // ── ПЛАВАЮЩИЙ ТЕКСТ ──────────────────────────────────────
+        floatText(x, y, msg, color) {
+          const t = this.add
+            .text(x, y, msg, {
+              fontFamily: FONT,
+              fontSize: "26px",
+              color,
+              stroke: "#000",
+              strokeThickness: 4,
+            })
+            .setOrigin(0.5)
+            .setDepth(80);
+          this.tweens.add({
+            targets: t,
+            y: t.y - 50,
+            alpha: 0,
+            duration: 800,
+            onComplete: () => t.destroy(),
+          });
+        }
+
+        // ── ФИНАЛ ────────────────────────────────────────────────
+        showResult(msg, color) {
+          this.bgm.stop();
+          const txt = this.add
+            .text(W / 2, H / 2, msg, {
+              fontFamily: FONT,
+              fontSize: "80px",
+              color,
+              stroke: "#000000",
+              strokeThickness: 10,
+            })
+            .setOrigin(0.5)
+            .setDepth(90);
+          this.tweens.add({
+            targets: txt,
+            alpha: { from: 0, to: 1 },
+            scale: { from: 0.4, to: 1 },
+            duration: 600,
+            ease: "Back.easeOut",
+          });
+          this.time.delayedCall(3500, () => this.scene.restart());
+        }
+      }
+
+      // =============================================================
+      // CONFIG
+      // =============================================================
+      const config = {
+        type: Phaser.AUTO,
+        width: W,
+        height: H,
+        backgroundColor: "#111111",
+        scale: {
+          mode: Phaser.Scale.FIT,
+          autoCenter: Phaser.Scale.CENTER_BOTH,
+          width: W,
+          height: H,
+        },
+        physics: { default: "arcade", arcade: { debug: false } },
+        scene: [PreloadScene, Scene1],
+      };
+
+      window.onload = async () => {
+        try {
+          const font = new FontFace(
+            "GameFont",
+            "url(assets/fonts/3_Muz-TV2000.ttf) format('truetype')",
+          );
+          const loaded = await font.load();
+          document.fonts.add(loaded);
+          await document.fonts.ready;
+        } catch (e) {
+          console.warn("Font load failed:", e);
+        }
+        window._game = new Phaser.Game(config);
+      };
+
+      document.addEventListener(
+        "pause",
+        () => {
+          if (window._game) window._game.sound.pauseAll();
+        },
+        false,
+      );
+      document.addEventListener(
+        "resume",
+        () => {
+          if (window._game) window._game.sound.resumeAll();
+        },
+        false,
+      );
+      document.addEventListener("visibilitychange", () => {
+        if (!window._game) return;
+        document.hidden
+          ? window._game.sound.pauseAll()
+          : window._game.sound.resumeAll();
+      });
+    </script>
+  </body>
+</html>
