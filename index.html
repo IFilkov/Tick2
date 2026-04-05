@@ -109,6 +109,7 @@
           A("p_walk", "player", 4, 7, 10);
           A("p_kick", "player", 8, 11, 12, 0);
           A("p_punch", "player", 12, 15, 12, 0);
+          A("p_throw", "player", 16, 19, 8, 0); // ряд 5 — бросок
 
           // Собака
           A("dog_idle", "dog", 0, 3, 5);
@@ -202,6 +203,9 @@
           this.attackKey = this.input.keyboard.addKey(
             Phaser.Input.Keyboard.KeyCodes.Z,
           );
+          this.throwKey = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.X,
+          );
           this.jumpKey = this.input.keyboard.addKey(
             Phaser.Input.Keyboard.KeyCodes.SPACE,
           );
@@ -219,6 +223,7 @@
           };
           this.prevJump = false;
           this.prevDog = false;
+          this.prevThrow = false;
 
           this.createMobileControls();
 
@@ -502,12 +507,16 @@
           const attackJust =
             Phaser.Input.Keyboard.JustDown(this.attackKey) ||
             (!this.prevAttack && this.btnState.attack);
+          const throwJust =
+            Phaser.Input.Keyboard.JustDown(this.throwKey) ||
+            (!this.prevThrow && this.btnState.throw);
           const dogJust =
             Phaser.Input.Keyboard.JustDown(this.dogKey) ||
             (!this.prevDog && this.btnState.dog);
 
           this.prevJump = this.btnState.jump;
           this.prevAttack = this.btnState.attack;
+          this.prevThrow = this.btnState.throw;
           this.prevDog = this.btnState.dog;
 
           if (p.isAttacking) {
@@ -563,6 +572,45 @@
               p.isAttacking = false;
               p.anims.play("p_idle", true);
             });
+          }
+
+          // ── Бросок ───────────────────────────────────────────────
+          if (throwJust && !p.isAttacking && !p.isJumping) {
+            // Ищем ближайшего врага в зоне броска
+            let throwTarget = null,
+              throwDist = Infinity;
+            this.enemies.forEach((en) => {
+              if (en.dead) return;
+              const dx = Math.abs(en.x - p.x);
+              const dy = Math.abs(en.y - p.y);
+              if (dx < 120 && dy < 60 && dx < throwDist) {
+                throwDist = dx;
+                throwTarget = en;
+              }
+            });
+            if (throwTarget) {
+              p.isAttacking = true;
+              p.setVelocity(0, 0);
+              // Разворачиваемся к цели
+              p.facing = throwTarget.x > p.x ? 1 : -1;
+              p.flipX = p.facing === 1;
+              p.anims.play("p_throw", true);
+              // Анимация броска
+              const throwAnim = this.anims.get("p_throw");
+              const throwDur = throwAnim
+                ? (throwAnim.frames.length / throwAnim.frameRate) * 1000
+                : 600;
+              // Скрываем цель на время анимации
+              throwTarget.setAlpha(0.4);
+              throwTarget.setVelocity(0, 0);
+              throwTarget.isAttacking = true;
+              this.time.delayedCall(throwDur + 50, () => {
+                p.isAttacking = false;
+                p.anims.play("p_idle", true);
+                // Бросаем врага в противоположную сторону
+                this.throwEnemy(throwTarget, p.facing);
+              });
+            }
           }
 
           // ── Команда собаке атаковать ─────────────────────────────
@@ -768,6 +816,52 @@
             e.anims.play(`${e.prefix}_idle`, true);
             e.flipX = e.prefix === "rob" ? dx > 0 : dx < 0;
           }
+        }
+
+        // ── БРОСОК ВРАГА ────────────────────────────────────────
+        throwEnemy(e, playerFacing) {
+          if (!e || e.dead) return;
+          e.setAlpha(1);
+          e.isAttacking = false;
+          e.attackCD = true;
+          // Летит в противоположную от игрока сторону
+          const dir = -playerFacing; // противоположное направление
+          const throwDist = Phaser.Math.Between(180, 280);
+          const startX = e.x,
+            startY = e.y;
+          const endX = Phaser.Math.Clamp(startX + dir * throwDist, 50, 750);
+          // Дуга полёта через tween
+          e.setVelocity(0, 0);
+          this.tweens.add({
+            targets: e,
+            x: endX,
+            duration: 500,
+            ease: "Power2",
+            onUpdate: (tween) => {
+              const t = tween.progress;
+              e.y = startY - Math.sin(t * Math.PI) * 80; // параболическая дуга
+              e.shadow.x = e.x;
+              e.shadow.y = startY;
+            },
+            onComplete: () => {
+              e.y = startY;
+              // Звук падения
+              this.sound.play("hit3", { volume: 0.7 });
+              // Небольшой отскок
+              this.tweens.add({
+                targets: e,
+                y: startY - 20,
+                duration: 120,
+                yoyo: true,
+                ease: "Power1",
+                onComplete: () => {
+                  // Враг встаёт и снова идёт
+                  e.attackCD = false;
+                  e.anims.play(`${e.prefix}_idle`, true);
+                },
+              });
+            },
+          });
         }
 
         // ── ПРОВЕРКА ХИТОВ ───────────────────────────────────────
