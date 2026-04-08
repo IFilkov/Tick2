@@ -76,6 +76,18 @@
             frameWidth: 172,
             frameHeight: 249,
           });
+          this.load.spritesheet("robot2", `${img}robot2.png`, {
+            frameWidth: 216,
+            frameHeight: 312,
+          });
+          this.load.spritesheet("girl1", `${img}girl1.png`, {
+            frameWidth: 256,
+            frameHeight: 256,
+          });
+          this.load.spritesheet("girl2", `${img}girl2.png`, {
+            frameWidth: 256,
+            frameHeight: 256,
+          });
 
           this.load.image("bg", `${img}background.png`);
           this.load.image("sky", `${img}sky.jpg`);
@@ -89,6 +101,7 @@
           this.load.audio("krit", `${aud}krit.mp3`);
           this.load.audio("knockout", `${aud}knockout.mp3`);
           this.load.audio("fon1", `${aud}fon1.mp3`);
+          this.load.audio("bassFunck", `${aud}bassFunck.mp3`);
         }
 
         create() {
@@ -105,7 +118,7 @@
                 repeat: rep,
               });
           };
-          A("p_idle", "player", 4, 4, 5); // Используем стойку из ряда ходьбы
+          A("p_idle", "player", 0, 3, 5); // ряд 1 — стойка на месте
           A("p_walk", "player", 4, 7, 10);
           A("p_kick", "player", 8, 11, 12, 0);
           A("p_punch", "player", 12, 15, 12, 0);
@@ -128,6 +141,19 @@
           A("rob_punch", "robot", 4, 7, 12, 0);
           A("rob_kick", "robot", 8, 11, 12, 0);
           A("rob_death", "robot", 12, 14, 8, 0);
+          A("r2_idle", "robot2", 0, 3, 10);
+          A("r2_walk", "robot2", 0, 3, 12);
+          A("r2_punch", "robot2", 4, 7, 12, 0);
+          A("r2_kick", "robot2", 8, 11, 12, 0);
+          A("r2_death", "robot2", 12, 14, 8, 0);
+          A("g1_idle", "girl1", 0, 3, 5);
+          A("g1_walk", "girl1", 4, 7, 10);
+          A("g1_punch", "girl1", 8, 11, 12, 0);
+          A("g1_death", "girl1", 12, 15, 8, 0);
+          A("g2_idle", "girl2", 0, 3, 5);
+          A("g2_walk", "girl2", 4, 7, 10);
+          A("g2_punch", "girl2", 8, 11, 12, 0);
+          A("g2_death", "girl2", 12, 15, 8, 0);
 
           this.scene.start("Scene1");
         }
@@ -159,6 +185,9 @@
           // ── Создаём персонажей ────────────────────────────────────
           this.player = this.makePlayer(W / 2, 460);
           this.dog = this.makeDog(W / 2 - 80, 460);
+          this.wave2Spawned = false;
+          this.wave2Active = false;
+          this.generation = (this.generation || 0) + 1; // инвалидирует старые delayedCall
           this.enemies = [
             this.makeEnemy("homeless", 80, 440, "bum"),
             this.makeEnemy("robot", 720, 450, "rob"),
@@ -168,6 +197,7 @@
           this.gameOver = false;
           this.playerHP = 100;
           this.dogHP = 100;
+          this.dogDead = false;
 
           // ── Хитзона игрока ───────────────────────────────────────
           this.playerFist = this.add.zone(0, 0, 70, 60);
@@ -231,7 +261,7 @@
           this.createUI();
 
           // ── Фон ───────────────────────────────────────────────────
-          this.bgm = this.sound.add("fon1", { loop: true, volume: 0.25 });
+          this.bgm = this.sound.add("bassFunck", { loop: true, volume: 0.25 });
           this.bgm.play();
 
           // ── Depth sort каждый кадр ────────────────────────────────
@@ -279,9 +309,13 @@
           e.body.setAllowGravity(false);
           e.setScale(key === "robot" ? 1.1 : 1.0);
           e.setCollideWorldBounds(true);
-          e.body
-            .setSize(key === "robot" ? 70 : 80, key === "robot" ? 180 : 220)
-            .setOffset(key === "robot" ? 51 : 68, key === "robot" ? 69 : 92);
+          const isGirl = key === "girl1" || key === "girl2";
+          const isRob2 = key === "robot2";
+          const bw = key === "robot" ? 70 : isGirl ? 80 : isRob2 ? 80 : 80;
+          const bh = key === "robot" ? 180 : isGirl ? 180 : isRob2 ? 200 : 220;
+          const ox = key === "robot" ? 51 : isGirl ? 88 : isRob2 ? 68 : 68;
+          const oy = key === "robot" ? 69 : isGirl ? 76 : isRob2 ? 112 : 92;
+          e.body.setSize(bw, bh).setOffset(ox, oy);
           e.anims.play(`${prefix}_idle`, true);
           e.prefix = prefix;
           e.hp = 100;
@@ -464,7 +498,13 @@
           );
           this.dogHpBar.width = Math.max(0, (this.dogHP / 100) * 160);
           this.dogHpBar.setFillStyle(
-            this.dogHP > 50 ? 0x88ff44 : this.dogHP > 25 ? 0xffcc00 : 0xff2200,
+            this.dogDead
+              ? 0x555555
+              : this.dogHP > 50
+                ? 0x88ff44
+                : this.dogHP > 25
+                  ? 0xffcc00
+                  : 0xff2200,
           );
         }
 
@@ -474,7 +514,9 @@
 
           this.updatePlayer();
           this.updateDog();
+          this.assignEnemyRoles();
           this.enemies.forEach((e) => this.updateEnemy(e));
+          this.checkWave2();
           this.checkHits();
           this.updateShadows();
           this.updateEnemyHpBars();
@@ -687,11 +729,12 @@
                 : 350;
               this.time.delayedCall(dogAtkDur + 40, () => {
                 d.isAttacking = false;
-                this.dealDamageToEnemy(
-                  d.attackTarget,
-                  Phaser.Math.Between(8, 18),
-                  d.x,
-                );
+                const dt = d.attackTarget;
+                if (dt && !dt.dead) {
+                  this.dealDamageToEnemy(dt, Phaser.Math.Between(8, 18), d.x);
+                  // Враг начинает бить собаку в ответ
+                  if (!dt.dead) dt._fightingDog = true;
+                }
                 if (d.attackTarget && d.attackTarget.dead)
                   d.attackTarget = null;
                 d.anims.play("dog_idle", true);
@@ -753,25 +796,144 @@
         }
 
         // ── ВРАГИ ────────────────────────────────────────────────
+        // ── ВСПОМОГАТЕЛЬНЫЙ МЕТОД: определяем роль врага ────────
+        // ── Умное распределение мест вокруг цели ────────────────
+        // Каждый враг проверяет какая сторона от цели свободна
+        // и занимает ближайшую к себе незанятую позицию
+        assignSlot(enemy, attackers, targetX) {
+          const SLOT_DIST = 90; // дистанция позиции от цели
+          const slots = [
+            { side: "left", x: targetX - SLOT_DIST },
+            { side: "right", x: targetX + SLOT_DIST },
+          ];
+
+          // Узнаём какие слоты уже заняты другими
+          const takenSides = attackers
+            .filter((e) => e !== enemy && e._side)
+            .map((e) => e._side);
+
+          // Свободные слоты
+          const free = slots.filter((s) => !takenSides.includes(s.side));
+
+          if (free.length === 0) {
+            // Оба заняты — ждём
+            enemy._side = null;
+            return false;
+          }
+
+          // Выбираем ближайший свободный к текущей позиции врага
+          free.sort(
+            (a, b) => Math.abs(a.x - enemy.x) - Math.abs(b.x - enemy.x),
+          );
+          enemy._side = free[0].side;
+          return true;
+        }
+
+        assignEnemyRoles() {
+          const alive = this.enemies.filter((e) => !e.dead);
+
+          if (this.wave2Active) {
+            // ── Волна 2 ────────────────────────────────────────────
+            const girls = alive.filter(
+              (e) => e.prefix === "g1" || e.prefix === "g2",
+            );
+            const robots = alive.filter((e) => e.prefix === "r2");
+            const dogAlive = !this.dogDead;
+
+            // Девушки всегда атакуют игрока
+            girls.forEach((g) => {
+              g._role = "player";
+            });
+            girls.forEach((g) => this.assignSlot(g, girls, this.player.x));
+
+            // Свободных мест у игрока
+            const playerAttackers = alive.filter((e) => e._role === "player");
+            const openSlots = 2 - girls.length;
+
+            const sortedRobots = [...robots].sort(
+              (a, b) =>
+                Math.abs(a.x - this.player.x) - Math.abs(b.x - this.player.x),
+            );
+
+            sortedRobots.forEach((r, i) => {
+              if (dogAlive) {
+                // Атакуют собаку
+                r._role = "dog";
+                this.assignSlot(
+                  r,
+                  sortedRobots.filter((rr) => rr._role === "dog"),
+                  this.dog.x,
+                );
+              } else if (i < openSlots) {
+                // Занимаем место игрока
+                r._role = "player";
+                const allPlayerAttackers = [
+                  ...girls,
+                  ...sortedRobots.slice(0, i + 1),
+                ];
+                this.assignSlot(r, allPlayerAttackers, this.player.x);
+              } else {
+                r._role = "wait";
+                r._side = null;
+              }
+            });
+          } else {
+            // ── Волна 1 и другие — все атакуют игрока ──────────────
+            alive.forEach((e) => {
+              e._role = "player";
+            });
+            // Каждый занимает свободную сторону
+            alive.forEach((e) => this.assignSlot(e, alive, this.player.x));
+            // Если мест не хватило — ждут
+            alive.forEach((e) => {
+              if (!e._side) e._role = "wait";
+            });
+          }
+        }
+
         updateEnemy(e) {
           if (e.dead) return;
           if (e.isAttacking) return;
 
-          const px = this.player.x,
-            py = this.player.y;
-          const dx = px - e.x,
-            dy = py - e.y;
-          const dist2d = Math.sqrt(dx * dx);
-          const distY = Math.abs(dy);
+          // Определяем цель на основе роли
+          let targetX, targetY;
+          if (e._role === "dog" && !this.dogDead) {
+            targetX = this.dog.x;
+            targetY = this.dog.y;
+          } else if (e._role === "wait") {
+            e.setVelocity(0, 0);
+            e.anims.play(`${e.prefix}_idle`, true);
+            return;
+          } else {
+            targetX = this.player.x;
+            targetY = this.player.y;
+          }
+
+          const dx = targetX - e.x;
+          const dy = targetY - e.y;
           const dist = Math.sqrt(dx * dx + dy * dy * 4);
 
-          // Робот смотрит влево по умолчанию — инвертируем flipX
-          e.flipX = e.prefix === "rob" ? dx > 0 : dx < 0;
+          // flipX по направлению движения
+          e.flipX = e.prefix === "rob" || e.prefix === "r2" ? dx > 0 : dx < 0;
 
           const meleeRange = 75;
 
-          if (dist < meleeRange && !e.attackCD) {
-            // Атака игрока
+          // ── Позиция назначения по занятому слоту ──────────────────
+          const SLOT_DIST = e._role === "dog" ? 75 : 90;
+          let destX =
+            e._side === "left"
+              ? targetX - SLOT_DIST
+              : e._side === "right"
+                ? targetX + SLOT_DIST
+                : targetX;
+          let destY = targetY;
+
+          const ddx = destX - e.x,
+            ddy = destY - e.y;
+          const ddist = Math.sqrt(ddx * ddx + ddy * ddy * 4);
+
+          if (ddist < meleeRange && !e.attackCD) {
+            // Атака
             e.setVelocity(0, 0);
             e.isAttacking = true;
             e.attackCD = true;
@@ -781,40 +943,46 @@
               ? (atkAnim.frames.length / atkAnim.frameRate) * 1000
               : 500;
             e.anims.play(atk, true);
-            // Используем delayedCall вместо once() — надёжнее
             this.time.delayedCall(atkDuration + 50, () => {
               if (e.dead) return;
               e.isAttacking = false;
-              const d2 = Math.sqrt(
-                Math.pow(this.player.x - e.x, 2) +
-                  Math.pow(this.player.y - e.y, 2) * 4,
-              );
-              if (d2 < meleeRange + 20)
-                this.hurtPlayer(Phaser.Math.Between(5, 18), e.x);
+              if (e._role === "dog" && !this.dogDead) {
+                const dd2 = Math.sqrt(
+                  Math.pow(this.dog.x - e.x, 2) +
+                    Math.pow(this.dog.y - e.y, 2) * 4,
+                );
+                if (dd2 < meleeRange + 20)
+                  this.hurtDog(Phaser.Math.Between(5, 15), e.x);
+              } else {
+                const d2 = Math.sqrt(
+                  Math.pow(this.player.x - e.x, 2) +
+                    Math.pow(this.player.y - e.y, 2) * 4,
+                );
+                if (d2 < meleeRange + 30)
+                  this.hurtPlayer(Phaser.Math.Between(5, 18), e.x);
+              }
               e.anims.play(`${e.prefix}_idle`, true);
               const cd = e.prefix === "bum" ? 400 : 700;
               this.time.delayedCall(cd, () => {
                 if (!e.dead) e.attackCD = false;
               });
             });
-          } else if (dist > meleeRange) {
-            // Преследуем
-            const spd = e.prefix === "rob" ? 110 : 95;
-            e.setVelocityX(Math.sign(dx) * spd);
-            e.setVelocityY(Math.sign(dy) * spd * 0.6);
+          } else if (ddist > meleeRange) {
+            // Преследуем к назначенной позиции
+            const spd =
+              e._speed || (e.prefix === "rob" || e.prefix === "r2" ? 110 : 95);
+            e.setVelocityX(Math.sign(ddx) * spd);
+            e.setVelocityY(Math.sign(ddy) * spd * 0.6);
             const walkKey = this.anims.exists(`${e.prefix}_walk`)
               ? `${e.prefix}_walk`
               : `${e.prefix}_idle`;
             e.anims.play(walkKey, true);
-
-            // Ограничение по полу
             if (e.y < FLOOR_TOP + 20) e.y = FLOOR_TOP + 20;
             if (e.y > FLOOR_BOT) e.y = FLOOR_BOT;
           } else {
-            // В диапазоне удара, но кулдаун — стоим и смотрим на игрока
             e.setVelocity(0, 0);
             e.anims.play(`${e.prefix}_idle`, true);
-            e.flipX = e.prefix === "rob" ? dx > 0 : dx < 0;
+            e.flipX = e.prefix === "rob" || e.prefix === "r2" ? dx > 0 : dx < 0;
           }
         }
 
@@ -942,7 +1110,13 @@
           e.dead = true;
           e.setVelocity(0, 0);
           this.sound.play("knockout", { volume: 0.8 });
-          const deathAnim = e.prefix === "rob" ? "rob_death" : "bum_death";
+          const deathMap = {
+            rob: "rob_death",
+            bum: "bum_death",
+            g1: "g1_death",
+            g2: "g2_death",
+          };
+          const deathAnim = deathMap[e.prefix] || "bum_death";
           e.anims.play(deathAnim, true);
           this.time.delayedCall(1500, () => {
             this.tweens.add({
@@ -962,18 +1136,73 @@
           });
 
           // Проверка победы
+          // Победа только когда волна 2 активна и все побеждены
           const allDead = this.enemies.every((en) => en.dead);
-          if (allDead)
-            this.time.delayedCall(1000, () =>
-              this.showResult("ПОБЕДА!", "#00ff88"),
+          if (allDead && this.wave2Active) {
+            const winGen = this.generation;
+            this.time.delayedCall(1000, () => {
+              if (this.generation !== winGen) return;
+              this.showResult("ПОБЕДА!", "#00ff88");
+            });
+          }
+        }
+
+        // ── УРОН СОБАКЕ ───────────────────────────────────────────
+        hurtDog(dmg, fromX) {
+          if (this.dogDead) return;
+          this.dogHP = Math.max(0, this.dogHP - dmg);
+          this.sound.play(Phaser.Math.RND.pick(["hit2", "hit3"]), {
+            volume: 0.7,
+          });
+          this.dog.setTint(0xff2200);
+          this.time.delayedCall(150, () => {
+            if (!this.dogDead) this.dog.clearTint();
+          });
+          // Плавающий урон
+          this.floatText(this.dog.x, this.dog.y - 80, `-${dmg}`, "#ff6600");
+          if (this.dogHP <= 0) {
+            this.dogDead = true;
+            this.sound.play("groan1", { volume: 0.8 });
+            this.dog.anims.stop();
+            this.dog.setTint(0x555555);
+            this.dog.setAlpha(0.5);
+            this.dog.setVelocity(0, 0);
+            this.dog.attackTarget = null;
+            // Сбрасываем fightingDog у всех врагов
+            this.enemies.forEach((en) => {
+              en._fightingDog = false;
+            });
+            // Воскрешаем через 10 секунд
+            this.floatText(
+              this.dog.x,
+              this.dog.y - 120,
+              "Собака КО...",
+              "#ff4400",
             );
+            this.time.delayedCall(10000, () => {
+              this.dogHP = 100;
+              this.dogDead = false;
+              this.dog.clearTint();
+              this.dog.setAlpha(1);
+              this.dog.anims.play("dog_idle", true);
+              this.sound.play("bark", { volume: 0.8 });
+              this.floatText(
+                this.dog.x,
+                this.dog.y - 120,
+                "Собака воскресла!",
+                "#00ff88",
+              );
+            });
+          }
         }
 
         // ── УРОН ИГРОКУ ──────────────────────────────────────────
         hurtPlayer(dmg, fromX) {
           if (this.gameOver) return;
           this.playerHP = Math.max(0, this.playerHP - dmg);
-          this.sound.play("groan1", { volume: 0.8 });
+          this.sound.play(Phaser.Math.RND.pick(["hit2", "hit3"]), {
+            volume: 0.8,
+          });
 
           this.player.setTint(0xff0000);
           this.time.delayedCall(200, () => {
@@ -1036,6 +1265,29 @@
             e.hpBar.fill.setFillStyle(
               ratio > 0.5 ? 0xff4400 : ratio > 0.25 ? 0xffaa00 : 0xff0000,
             );
+          });
+        }
+
+        checkWave2() {
+          if (this.wave2Spawned || this.gameOver) return;
+          if (!this.enemies.length || !this.enemies.every((e) => e.dead))
+            return;
+          this.wave2Spawned = true;
+          this.floatText(W / 2, H / 2 - 50, "Волна 2!", "#ffcc00");
+          this.wave2Active = false;
+          const spawnGen = this.generation;
+          this.time.delayedCall(1500, () => {
+            if (this.generation !== spawnGen) return; // сцена перезапустилась — отмена
+            const g1 = this.makeEnemy("girl1", 60, 430, "g1");
+            const g2 = this.makeEnemy("girl2", 740, 445, "g2");
+            const r2a = this.makeEnemy("robot2", 200, 415, "r2");
+            const r2b = this.makeEnemy("robot2", 600, 425, "r2");
+            g1._speed = 120;
+            g2._speed = 120;
+            r2a._speed = 130;
+            r2b._speed = 130;
+            this.enemies.push(g1, g2, r2a, r2b);
+            this.wave2Active = true;
           });
         }
 
